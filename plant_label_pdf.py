@@ -134,18 +134,27 @@ def _label_positions(template: dict) -> list[tuple[float, float]]:
     return positions
 
 
-def _fit_icon(image_bytes: bytes | None, max_size: float) -> ImageReader | None:
+def _prepare_icon_png(image_bytes: bytes | None, max_pixels: int = 200) -> bytes | None:
+    """Resize and flatten an uploaded icon for reliable PDF embedding."""
     if not image_bytes:
         return None
 
-    image = Image.open(io.BytesIO(image_bytes))
-    if image.mode not in ("RGB", "RGBA"):
-        image = image.convert("RGBA")
+    try:
+        image = Image.open(io.BytesIO(image_bytes))
+        image.load()
+    except Exception:
+        return None
 
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    buffer.seek(0)
-    return ImageReader(buffer)
+    image = image.convert("RGBA")
+    image.thumbnail((max_pixels, max_pixels), Image.Resampling.LANCZOS)
+
+    # Flatten transparency onto white — works reliably in ReportLab PDFs.
+    flat = Image.new("RGB", image.size, (255, 255, 255))
+    flat.paste(image, mask=image.split()[3])
+
+    out = io.BytesIO()
+    flat.save(out, format="PNG")
+    return out.getvalue()
 
 
 def _truncate_to_width(
@@ -171,25 +180,25 @@ def _draw_single_label(
     width: float,
     height: float,
     plant: dict,
-    icon_reader: ImageReader | None,
+    icon_png: bytes | None,
     style: LabelStyle,
 ) -> None:
     fonts = FONT_FAMILIES[style.font_family]
     pad = 2
-    icon_slot = min(height - 2 * pad, width * 0.22) if icon_reader else 0
-    text_x = x + pad + (icon_slot + pad if icon_reader else 0)
+    icon_slot = min(height - 2 * pad, width * 0.25) if icon_png else 0
+    text_x = x + pad + (icon_slot + pad if icon_png else 0)
     text_width = width - (text_x - x) - pad
 
-    if icon_reader and icon_slot > 0:
+    if icon_png and icon_slot > 0:
+        icon_y = y + (height - icon_slot) / 2
         pdf.drawImage(
-            icon_reader,
+            ImageReader(io.BytesIO(icon_png)),
             x + pad,
-            y + (height - icon_slot) / 2,
+            icon_y,
             width=icon_slot,
             height=icon_slot,
             preserveAspectRatio=True,
-            anchor="sw",
-            mask="auto",
+            mask=None,
         )
 
     common = plant.get("Common Name", "")
@@ -242,7 +251,7 @@ def build_labels_pdf(
 
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=(8.5 * inch, 11 * inch))
-    icon_reader = _fit_icon(icon_bytes, template["label_height"])
+    icon_png = _prepare_icon_png(icon_bytes)
 
     for index, plant in enumerate(plants):
         if index > 0 and index % labels_per_sheet == 0:
@@ -257,10 +266,20 @@ def build_labels_pdf(
             template["label_width"],
             template["label_height"],
             plant,
-            icon_reader,
+            icon_png,
             style,
         )
 
     pdf.save()
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def render_pdf_preview_png(pdf_bytes: bytes, zoom: float = 2.0) -> bytes:
+    """Render the first PDF page to PNG for in-app preview (Chrome-safe)."""
+    import fitz
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    page = doc[0]
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+    return pix.tobytes("png")
