@@ -1,0 +1,22 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+.Python
+*.egg-info/
+.eggs/
+
+# OS
+.DS_Store
+~$*
+
+# Local data and outputs (not needed for deployment)
+*.xlsx
+*.csv
+*.gsheet
+
+# Local-only scripts
+Start Plant Label Tool.command
+PlantScraper
+PlantScraper V2
+plant_label_generator.py
