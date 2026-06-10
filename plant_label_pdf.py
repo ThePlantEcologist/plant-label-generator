@@ -185,16 +185,29 @@ def _draw_single_label(
 ) -> None:
     fonts = FONT_FAMILIES[style.font_family]
     pad = 2
+    line_gap = 1
     icon_slot = min(height - 2 * pad, width * 0.25) if icon_png else 0
     text_x = x + pad + (icon_slot + pad if icon_png else 0)
     text_width = width - (text_x - x) - pad
 
+    text_block_height = (
+        style.common_size
+        + line_gap
+        + style.scientific_size
+        + line_gap
+        + style.care_size
+        + line_gap
+        + style.care_size
+    )
+    text_top = y + height - pad
+    text_bottom = text_top - text_block_height
+    text_block_center = (text_top + text_bottom) / 2
+
     if icon_png and icon_slot > 0:
-        icon_y = y + (height - icon_slot) / 2
         pdf.drawImage(
             ImageReader(io.BytesIO(icon_png)),
             x + pad,
-            icon_y,
+            text_block_center - icon_slot / 2,
             width=icon_slot,
             height=icon_slot,
             preserveAspectRatio=True,
@@ -205,14 +218,13 @@ def _draw_single_label(
     scientific = plant.get("Scientific Name", "")
     light = simplify_light(plant.get("Light", ""))
     water = simplify_water(plant.get("Water", ""))
-    care_line = f"Light: {light}  |  Water: {water}"
+    light_line = f"Light: {light}"
+    water_line = f"Water: {water}"
 
-    line_gap = 1
-    cursor_y = y + height - pad
+    cursor_y = text_top - style.common_size
 
     pdf.setFont(fonts["bold"], style.common_size)
     common = _truncate_to_width(pdf, common, fonts["bold"], style.common_size, text_width)
-    cursor_y -= style.common_size
     pdf.drawString(text_x, cursor_y, common)
 
     pdf.setFont(fonts["italic"], style.scientific_size)
@@ -224,11 +236,17 @@ def _draw_single_label(
     pdf.drawString(text_x, cursor_y, sci_text)
 
     pdf.setFont(fonts["regular"], style.care_size)
-    care_line = _truncate_to_width(
-        pdf, care_line, fonts["regular"], style.care_size, text_width
+    light_line = _truncate_to_width(
+        pdf, light_line, fonts["regular"], style.care_size, text_width
     )
     cursor_y -= line_gap + style.care_size
-    pdf.drawString(text_x, cursor_y, care_line)
+    pdf.drawString(text_x, cursor_y, light_line)
+
+    water_line = _truncate_to_width(
+        pdf, water_line, fonts["regular"], style.care_size, text_width
+    )
+    cursor_y -= line_gap + style.care_size
+    pdf.drawString(text_x, cursor_y, water_line)
 
 
 def build_labels_pdf(
