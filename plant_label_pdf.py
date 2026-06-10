@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass
+
 from PIL import Image
 from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
+
+from plant_scraper import simplify_light, simplify_water
 
 # Avery specs: label size and grid on US Letter (8.5" x 11").
 AVERY_TEMPLATES: dict[str, dict] = {
@@ -101,9 +104,9 @@ FONT_FAMILIES = {
 @dataclass
 class LabelStyle:
     font_family: str = "Helvetica (clean sans-serif)"
-    common_size: int = 9
-    scientific_size: int = 8
-    care_size: int = 7
+    common_size: int = 8
+    scientific_size: int = 7
+    care_size: int = 6
 
 
 def template_choices() -> dict[str, str]:
@@ -172,8 +175,8 @@ def _draw_single_label(
     style: LabelStyle,
 ) -> None:
     fonts = FONT_FAMILIES[style.font_family]
-    pad = 3
-    icon_slot = min(height - 2 * pad, width * 0.28) if icon_reader else 0
+    pad = 2
+    icon_slot = min(height - 2 * pad, width * 0.22) if icon_reader else 0
     text_x = x + pad + (icon_slot + pad if icon_reader else 0)
     text_width = width - (text_x - x) - pad
 
@@ -191,33 +194,32 @@ def _draw_single_label(
 
     common = plant.get("Common Name", "")
     scientific = plant.get("Scientific Name", "")
-    light = plant.get("Light", "")
-    water = plant.get("Water", "")
-    care_line = f"Light: {light}  |  Water: {water}".strip()
+    light = simplify_light(plant.get("Light", ""))
+    water = simplify_water(plant.get("Water", ""))
+    care_line = f"Light: {light}  |  Water: {water}"
 
-    line_gap = 1.5
-    top_y = y + height - pad
+    line_gap = 1
+    cursor_y = y + height - pad
 
     pdf.setFont(fonts["bold"], style.common_size)
     common = _truncate_to_width(pdf, common, fonts["bold"], style.common_size, text_width)
-    pdf.drawString(text_x, top_y - style.common_size, common)
+    cursor_y -= style.common_size
+    pdf.drawString(text_x, cursor_y, common)
 
     pdf.setFont(fonts["italic"], style.scientific_size)
     sci_text = f"({scientific})"
     sci_text = _truncate_to_width(
         pdf, sci_text, fonts["italic"], style.scientific_size, text_width
     )
-    pdf.drawString(
-        text_x,
-        top_y - style.common_size - style.scientific_size - line_gap,
-        sci_text,
-    )
+    cursor_y -= line_gap + style.scientific_size
+    pdf.drawString(text_x, cursor_y, sci_text)
 
     pdf.setFont(fonts["regular"], style.care_size)
     care_line = _truncate_to_width(
         pdf, care_line, fonts["regular"], style.care_size, text_width
     )
-    pdf.drawString(text_x, y + pad, care_line)
+    cursor_y -= line_gap + style.care_size
+    pdf.drawString(text_x, cursor_y, care_line)
 
 
 def build_labels_pdf(

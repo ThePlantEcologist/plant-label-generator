@@ -15,8 +15,6 @@ CSV_COLUMNS = [
     "Scientific Name",
     "Light",
     "Water",
-    "Soil",
-    "pH",
     "Source URL",
 ]
 
@@ -59,6 +57,28 @@ def parse_urls(url_input: str) -> list[str]:
     return urls
 
 
+def simplify_care_text(raw: str) -> str:
+    """Reduce toolbox care text to a short label, e.g. 'Full Sun' or 'Moist'."""
+    if not raw or raw in ("Not found", ""):
+        return raw
+
+    short = raw.split("(")[0].strip()
+    if "," in short:
+        short = short.split(",")[0].strip()
+
+    return short.title()
+
+
+def simplify_light(raw: str) -> str:
+    """Reduce toolbox light text to a short label, e.g. 'Full Sun'."""
+    return simplify_care_text(raw)
+
+
+def simplify_water(raw: str) -> str:
+    """Reduce soil drainage text to a short water label, e.g. 'Moist'."""
+    return simplify_care_text(raw)
+
+
 def get_detail_value(soup: BeautifulSoup, label: str) -> str:
     """Read a care attribute from a Plant Toolbox detail list."""
     dt_tag = soup.find("dt", string=label)
@@ -80,8 +100,6 @@ def scrape_plant(url: str) -> dict:
             "Scientific Name": "Error",
             "Light": f"Failed to fetch: {exc}",
             "Water": "",
-            "Soil": "",
-            "pH": "",
             "Source URL": url,
         }
 
@@ -105,10 +123,8 @@ def scrape_plant(url: str) -> dict:
     return {
         "Common Name": common_name,
         "Scientific Name": scientific_name or "Not found",
-        "Light": get_detail_value(soup, "Light:"),
-        "Water": get_detail_value(soup, "Soil Drainage:"),
-        "Soil": get_detail_value(soup, "Soil Texture:"),
-        "pH": get_detail_value(soup, "Soil pH:"),
+        "Light": simplify_light(get_detail_value(soup, "Light:")),
+        "Water": simplify_water(get_detail_value(soup, "Soil Drainage:")),
         "Source URL": url,
     }
 
