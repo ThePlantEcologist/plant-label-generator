@@ -36,8 +36,11 @@ def expand_plants(plants: list[dict], labels_per_plant: int) -> list[dict]:
 
 def show_pdf_preview(pdf_bytes: bytes) -> None:
     """Show the first page of the label sheet as an image (works in all browsers)."""
-    preview_png = render_pdf_preview_png(pdf_bytes)
-    st.image(preview_png, caption="Label sheet preview (page 1)", use_container_width=True)
+    try:
+        preview_png = render_pdf_preview_png(pdf_bytes)
+        st.image(preview_png, caption="Label sheet preview (page 1)", use_container_width=True)
+    except Exception:
+        st.info("PDF preview unavailable in this environment. You can still download the PDF.")
 
 
 st.title("Plant Label Generator")

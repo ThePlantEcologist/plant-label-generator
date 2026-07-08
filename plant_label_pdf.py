@@ -305,7 +305,10 @@ def build_labels_pdf(
 
 def render_pdf_preview_png(pdf_bytes: bytes, zoom: float = 2.0) -> bytes:
     """Render the first PDF page to PNG for in-app preview (Chrome-safe)."""
-    import fitz
+    try:
+        import fitz
+    except Exception as exc:
+        raise RuntimeError("PDF preview engine is unavailable.") from exc
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     page = doc[0]
