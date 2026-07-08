@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Plant Label Generator — CSV or printable Avery label PDF from Plant Toolbox URLs."""
 
 from datetime import datetime
