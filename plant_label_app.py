@@ -1,5 +1,7 @@
 """Plant Label Generator — CSV or printable Avery label PDF from Plant Toolbox URLs."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from io import StringIO
 
@@ -10,7 +12,6 @@ from plant_label_pdf import (
     FONT_FAMILIES,
     LabelStyle,
     build_labels_pdf,
-    render_pdf_preview_png,
     template_choices,
 )
 from plant_scraper import parse_urls, scrape_plant
@@ -22,7 +23,6 @@ st.set_page_config(
 )
 
 EDIT_COLUMNS = ["Common Name", "Scientific Name", "Light", "Water", "Source URL"]
-POINTS_PER_INCH = 72.0
 
 
 def expand_plants(plants: list[dict], labels_per_plant: int) -> list[dict]:
@@ -32,12 +32,6 @@ def expand_plants(plants: list[dict], labels_per_plant: int) -> list[dict]:
         for _ in range(labels_per_plant):
             rows.append(plant.copy())
     return rows
-
-
-def show_pdf_preview(pdf_bytes: bytes) -> None:
-    """Show the first page of the label sheet as an image (works in all browsers)."""
-    preview_png = render_pdf_preview_png(pdf_bytes)
-    st.image(preview_png, caption="Label sheet preview (page 1)", use_container_width=True)
 
 
 st.title("Plant Label Generator")
@@ -190,31 +184,6 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
             pdf_options["scientific_size"] = st.slider("Scientific name size", 5, 12, 7)
             pdf_options["care_size"] = st.slider("Light / water line size", 5, 11, 6)
 
-        with st.expander("Print alignment (calibration)", expanded=False):
-            st.caption(
-                "Use small nudges if labels are shifted. "
-                "Positive X moves right; positive Y moves up."
-            )
-            cal_col1, cal_col2 = st.columns(2)
-            with cal_col1:
-                pdf_options["offset_x_in"] = st.number_input(
-                    "Horizontal offset (inches)",
-                    min_value=-0.5,
-                    max_value=0.5,
-                    value=0.0,
-                    step=0.01,
-                    format="%.2f",
-                )
-            with cal_col2:
-                pdf_options["offset_y_in"] = st.number_input(
-                    "Vertical offset (inches)",
-                    min_value=-0.5,
-                    max_value=0.5,
-                    value=0.0,
-                    step=0.01,
-                    format="%.2f",
-                )
-
     generate = st.button("Generate labels", type="primary", use_container_width=True)
 
     if generate:
@@ -245,8 +214,6 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
                         template_code=pdf_options["template"],
                         style=style,
                         icon_bytes=icon_bytes,
-                        offset_x_points=pdf_options["offset_x_in"] * POINTS_PER_INCH,
-                        offset_y_points=pdf_options["offset_y_in"] * POINTS_PER_INCH,
                     )
                 st.session_state.pdf_timestamp = timestamp
 
@@ -266,7 +233,6 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
         )
 
         if "pdf_bytes" in st.session_state and st.session_state.pdf_bytes is not None:
-            show_pdf_preview(st.session_state.pdf_bytes)
             st.download_button(
                 label="Download PDF labels",
                 data=st.session_state.pdf_bytes,
@@ -275,10 +241,7 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
                 type="primary",
                 use_container_width=True,
             )
-            st.caption(
-                "Preview shows page 1 as an image. Download the PDF to print. "
-                "Print at 100% scale (no fit-to-page)."
-            )
+            st.caption("Print at 100% scale (no fit-to-page).")
         elif st.session_state.output_df is not None:
             csv_buffer = StringIO()
             st.session_state.output_df.to_csv(csv_buffer, index=False)

@@ -113,11 +113,7 @@ def template_choices() -> dict[str, str]:
     return {code: spec["label"] for code, spec in AVERY_TEMPLATES.items()}
 
 
-def _label_positions(
-    template: dict,
-    offset_x_points: float = 0.0,
-    offset_y_points: float = 0.0,
-) -> list[tuple[float, float]]:
+def _label_positions(template: dict) -> list[tuple[float, float]]:
     """Return bottom-left (x, y) for each label slot, row-major from top-left."""
     positions = []
     page_height = 11 * inch
@@ -126,13 +122,13 @@ def _label_positions(
         for col in range(template["columns"]):
             x = template["margin_left"] + col * (
                 template["label_width"] + template["h_gap"]
-            ) + offset_x_points
+            )
             y = (
                 page_height
                 - template["margin_top"]
                 - (row + 1) * template["label_height"]
                 - row * template["v_gap"]
-            ) + offset_y_points
+            )
             positions.append((x, y))
 
     return positions
@@ -152,7 +148,6 @@ def _prepare_icon_png(image_bytes: bytes | None, max_pixels: int = 200) -> bytes
     image = image.convert("RGBA")
     image.thumbnail((max_pixels, max_pixels), Image.Resampling.LANCZOS)
 
-    # Flatten transparency onto white — works reliably in ReportLab PDFs.
     flat = Image.new("RGB", image.size, (255, 255, 255))
     flat.paste(image, mask=image.split()[3])
 
@@ -258,8 +253,6 @@ def build_labels_pdf(
     template_code: str,
     style: LabelStyle | None = None,
     icon_bytes: bytes | None = None,
-    offset_x_points: float = 0.0,
-    offset_y_points: float = 0.0,
 ) -> bytes:
     """Build a multi-page Avery label PDF and return raw bytes."""
     if template_code not in AVERY_TEMPLATES:
@@ -267,11 +260,7 @@ def build_labels_pdf(
 
     style = style or LabelStyle()
     template = AVERY_TEMPLATES[template_code]
-    slots = _label_positions(
-        template,
-        offset_x_points=offset_x_points,
-        offset_y_points=offset_y_points,
-    )
+    slots = _label_positions(template)
     labels_per_sheet = len(slots)
 
     if not plants:
@@ -301,13 +290,3 @@ def build_labels_pdf(
     pdf.save()
     buffer.seek(0)
     return buffer.getvalue()
-
-
-def render_pdf_preview_png(pdf_bytes: bytes, zoom: float = 2.0) -> bytes:
-    """Render the first PDF page to PNG for in-app preview (Chrome-safe)."""
-    import fitz
-
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    page = doc[0]
-    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-    return pix.tobytes("png")
