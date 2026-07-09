@@ -134,26 +134,18 @@ def _label_positions(template: dict) -> list[tuple[float, float]]:
     return positions
 
 
-def _prepare_icon_png(image_bytes: bytes | None, max_pixels: int = 200) -> bytes | None:
-    """Resize and flatten an uploaded icon for reliable PDF embedding."""
+def _fit_icon(image_bytes: bytes | None, max_size: float) -> ImageReader | None:
     if not image_bytes:
         return None
 
-    try:
-        image = Image.open(io.BytesIO(image_bytes))
-        image.load()
-    except Exception:
-        return None
+    image = Image.open(io.BytesIO(image_bytes))
+    if image.mode not in ("RGB", "RGBA"):
+        image = image.convert("RGBA")
 
-    image = image.convert("RGBA")
-    image.thumbnail((max_pixels, max_pixels), Image.Resampling.LANCZOS)
-
-    flat = Image.new("RGB", image.size, (255, 255, 255))
-    flat.paste(image, mask=image.split()[3])
-
-    out = io.BytesIO()
-    flat.save(out, format="PNG")
-    return out.getvalue()
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    return ImageReader(buffer)
 
 
 def _truncate_to_width(
@@ -179,51 +171,39 @@ def _draw_single_label(
     width: float,
     height: float,
     plant: dict,
-    icon_png: bytes | None,
+    icon_reader: ImageReader | None,
     style: LabelStyle,
 ) -> None:
     fonts = FONT_FAMILIES[style.font_family]
     pad = 2
-    line_gap = 1
-    icon_slot = min(height - 2 * pad, width * 0.25) if icon_png else 0
-    text_x = x + pad + (icon_slot + pad if icon_png else 0)
+    icon_slot = min(height - 2 * pad, width * 0.22) if icon_reader else 0
+    text_x = x + pad + (icon_slot + pad if icon_reader else 0)
     text_width = width - (text_x - x) - pad
 
-    text_block_height = (
-        style.common_size
-        + line_gap
-        + style.scientific_size
-        + line_gap
-        + style.care_size
-        + line_gap
-        + style.care_size
-    )
-    text_top = y + height - pad
-    text_bottom = text_top - text_block_height
-    text_block_center = (text_top + text_bottom) / 2
-
-    if icon_png and icon_slot > 0:
+    if icon_reader and icon_slot > 0:
         pdf.drawImage(
-            ImageReader(io.BytesIO(icon_png)),
+            icon_reader,
             x + pad,
-            text_block_center - icon_slot / 2,
+            y + (height - icon_slot) / 2,
             width=icon_slot,
             height=icon_slot,
             preserveAspectRatio=True,
-            mask=None,
+            anchor="sw",
+            mask="auto",
         )
 
     common = plant.get("Common Name", "")
     scientific = plant.get("Scientific Name", "")
     light = simplify_light(plant.get("Light", ""))
     water = simplify_water(plant.get("Water", ""))
-    light_line = f"Light: {light}"
-    water_line = f"Water: {water}"
+    care_line = f"Light: {light}  |  Water: {water}"
 
-    cursor_y = text_top - style.common_size
+    line_gap = 1
+    cursor_y = y + height - pad
 
     pdf.setFont(fonts["bold"], style.common_size)
     common = _truncate_to_width(pdf, common, fonts["bold"], style.common_size, text_width)
+    cursor_y -= style.common_size
     pdf.drawString(text_x, cursor_y, common)
 
     pdf.setFont(fonts["italic"], style.scientific_size)
@@ -235,17 +215,11 @@ def _draw_single_label(
     pdf.drawString(text_x, cursor_y, sci_text)
 
     pdf.setFont(fonts["regular"], style.care_size)
-    light_line = _truncate_to_width(
-        pdf, light_line, fonts["regular"], style.care_size, text_width
+    care_line = _truncate_to_width(
+        pdf, care_line, fonts["regular"], style.care_size, text_width
     )
     cursor_y -= line_gap + style.care_size
-    pdf.drawString(text_x, cursor_y, light_line)
-
-    water_line = _truncate_to_width(
-        pdf, water_line, fonts["regular"], style.care_size, text_width
-    )
-    cursor_y -= line_gap + style.care_size
-    pdf.drawString(text_x, cursor_y, water_line)
+    pdf.drawString(text_x, cursor_y, care_line)
 
 
 def build_labels_pdf(
@@ -268,7 +242,7 @@ def build_labels_pdf(
 
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=(8.5 * inch, 11 * inch))
-    icon_png = _prepare_icon_png(icon_bytes)
+    icon_reader = _fit_icon(icon_bytes, template["label_height"])
 
     for index, plant in enumerate(plants):
         if index > 0 and index % labels_per_sheet == 0:
@@ -283,7 +257,7 @@ def build_labels_pdf(
             template["label_width"],
             template["label_height"],
             plant,
-            icon_png,
+            icon_reader,
             style,
         )
 

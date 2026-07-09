@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Scrape plant label data from NC State Plant Toolbox pages."""
 
 import re

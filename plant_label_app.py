@@ -1,7 +1,6 @@
 """Plant Label Generator — CSV or printable Avery label PDF from Plant Toolbox URLs."""
 
-from __future__ import annotations
-
+import base64
 from datetime import datetime
 from io import StringIO
 
@@ -32,6 +31,17 @@ def expand_plants(plants: list[dict], labels_per_plant: int) -> list[dict]:
         for _ in range(labels_per_plant):
             rows.append(plant.copy())
     return rows
+
+
+def show_pdf_preview(pdf_bytes: bytes) -> None:
+    """Embed a PDF preview in the app."""
+    encoded = base64.b64encode(pdf_bytes).decode()
+    st.markdown(
+        f'<iframe src="data:application/pdf;base64,{encoded}" '
+        'width="100%" height="640" style="border:1px solid #ddd;border-radius:8px;">'
+        "</iframe>",
+        unsafe_allow_html=True,
+    )
 
 
 st.title("Plant Label Generator")
@@ -71,7 +81,6 @@ with clear_col:
         st.session_state.pop("plants_df", None)
         st.session_state.pop("output_df", None)
         st.session_state.pop("pdf_bytes", None)
-        st.session_state.pop("label_icon_bytes", None)
         st.rerun()
 
 if load_plants:
@@ -151,27 +160,11 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
             index=0,
         )
 
-        uploaded_icon = st.file_uploader(
+        pdf_options["icon_file"] = st.file_uploader(
             "Label icon (optional)",
             type=["png", "jpg", "jpeg", "webp", "gif"],
             help="Shown on the left side of each label.",
-            key="label_icon_uploader",
         )
-        if uploaded_icon is not None:
-            st.session_state.label_icon_bytes = uploaded_icon.getvalue()
-
-        if st.session_state.get("label_icon_bytes"):
-            icon_col, clear_icon_col = st.columns([1, 3])
-            with icon_col:
-                st.image(
-                    st.session_state.label_icon_bytes,
-                    width=72,
-                    caption="Icon preview",
-                )
-            with clear_icon_col:
-                if st.button("Remove icon"):
-                    st.session_state.pop("label_icon_bytes", None)
-                    st.rerun()
 
         col1, col2 = st.columns(2)
         with col1:
@@ -199,7 +192,9 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
                 st.session_state.pop("pdf_bytes", None)
                 st.session_state.csv_timestamp = timestamp
             else:
-                icon_bytes = st.session_state.get("label_icon_bytes")
+                icon_bytes = None
+                if pdf_options.get("icon_file") is not None:
+                    icon_bytes = pdf_options["icon_file"].getvalue()
 
                 style = LabelStyle(
                     font_family=pdf_options["font_family"],
@@ -233,6 +228,7 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
         )
 
         if "pdf_bytes" in st.session_state and st.session_state.pdf_bytes is not None:
+            show_pdf_preview(st.session_state.pdf_bytes)
             st.download_button(
                 label="Download PDF labels",
                 data=st.session_state.pdf_bytes,
@@ -241,7 +237,10 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
                 type="primary",
                 use_container_width=True,
             )
-            st.caption("Print at 100% scale (no fit-to-page).")
+            st.caption(
+                "Print at 100% scale (no fit-to-page). "
+                "Load the matching Avery sheet in your printer."
+            )
         elif st.session_state.output_df is not None:
             csv_buffer = StringIO()
             st.session_state.output_df.to_csv(csv_buffer, index=False)
