@@ -13,15 +13,16 @@ from reportlab.pdfgen import canvas
 from plant_scraper import simplify_light, simplify_water
 
 # Avery specs: label size and grid on US Letter (8.5" x 11").
-# 5160/5260 use measured sheet margins: 1/8" L/R and column gaps, 15/32" top/bottom.
+# 5160/5260: labels exactly 2.125" × 1", no vertical gaps, 1/8" column gutters.
 AVERY_TEMPLATES: dict[str, dict] = {
     "5160": {
-        # 3×10 grid. Content is clipped to each label box.
-        "label": "Avery 5160 / 8460 — 1\" × 2⅝\" (30 per sheet)",
-        "label_width": ((8.5 - (1 / 8) - (1 / 8) - (1 / 8) - (1 / 8)) / 3) * inch,
-        "label_height": ((11 - (15 / 32) - (15 / 32)) / 10) * inch,
-        "margin_left": (1 / 8) * inch,
-        "margin_top": (15 / 32) * inch,
+        # Exact label size: 2.125" × 1". No vertical gaps (10 rows = 10").
+        # 1/8" column gutters; left/right margins centered on letter page.
+        "label": "Avery 5160 / 8460 — 1\" × 2.125\" (30 per sheet)",
+        "label_width": 2.125 * inch,
+        "label_height": 1.0 * inch,
+        "margin_left": ((8.5 - (3 * 2.125) - (2 * (1 / 8))) / 2) * inch,
+        "margin_top": 0.5 * inch,
         "columns": 3,
         "rows": 10,
         "h_gap": (1 / 8) * inch,
@@ -72,12 +73,12 @@ AVERY_TEMPLATES: dict[str, dict] = {
         "v_gap": 0.0,
     },
     "5260": {
-        # Same measured sheet layout as 5160.
-        "label": "Avery 5260 / 5520 — 1\" × 2⅝\" (30 per sheet)",
-        "label_width": ((8.5 - (1 / 8) - (1 / 8) - (1 / 8) - (1 / 8)) / 3) * inch,
-        "label_height": ((11 - (15 / 32) - (15 / 32)) / 10) * inch,
-        "margin_left": (1 / 8) * inch,
-        "margin_top": (15 / 32) * inch,
+        # Same exact sheet layout as 5160.
+        "label": "Avery 5260 / 5520 — 1\" × 2.125\" (30 per sheet)",
+        "label_width": 2.125 * inch,
+        "label_height": 1.0 * inch,
+        "margin_left": ((8.5 - (3 * 2.125) - (2 * (1 / 8))) / 2) * inch,
+        "margin_top": 0.5 * inch,
         "columns": 3,
         "rows": 10,
         "h_gap": (1 / 8) * inch,
@@ -117,22 +118,29 @@ def template_choices() -> dict[str, str]:
 
 
 def _label_positions(template: dict) -> list[tuple[float, float]]:
-    """Return bottom-left (x, y) for each label slot, row-major from top-left."""
+    """Return bottom-left (x, y) for each label slot, row-major from top-left.
+
+    Vertical pitch is exactly label_height + v_gap so lower rows cannot
+    drift upward into the row above.
+    """
     positions = []
     page_height = 11 * inch
+    label_w = template["label_width"]
+    label_h = template["label_height"]
+    margin_left = template["margin_left"]
+    margin_top = template["margin_top"]
+    h_gap = template["h_gap"]
+    v_gap = template["v_gap"]
+    # Top edge of row 0, then step down by exact pitch each row.
+    top_of_first = page_height - margin_top
+    pitch = label_h + v_gap
 
     for row in range(template["rows"]):
+        top_y = top_of_first - row * pitch
+        bottom_y = top_y - label_h
         for col in range(template["columns"]):
-            x = template["margin_left"] + col * (
-                template["label_width"] + template["h_gap"]
-            )
-            y = (
-                page_height
-                - template["margin_top"]
-                - (row + 1) * template["label_height"]
-                - row * template["v_gap"]
-            )
-            positions.append((x, y))
+            x = margin_left + col * (label_w + h_gap)
+            positions.append((x, bottom_y))
 
     return positions
 
@@ -177,27 +185,32 @@ def _draw_single_label(
     icon_reader: ImageReader | None,
     style: LabelStyle,
 ) -> None:
-    """Draw one label's content clipped to its bounding box."""
+    """Draw one label clipped to its exact  bounding box."""
     fonts = FONT_FAMILIES[style.font_family]
-    # Keep text/icon inset from the die-cut edge.
-    pad = 4
+    pad = 3  # points; keep content inside the die-cut
+    content_left = x + pad
+    content_right = x + width - pad
     content_bottom = y + pad
     content_top = y + height - pad
+    content_width = max(0, content_right - content_left)
+    content_height = max(0, content_top - content_bottom)
 
-    # Hard clip so nothing can spill into neighboring labels or gaps.
     pdf.saveState()
     clip = pdf.beginPath()
     clip.rect(x, y, width, height)
     pdf.clipPath(clip, stroke=0, fill=0)
 
-    icon_slot = min(height - 2 * pad, width * 0.22) if icon_reader else 0
-    text_x = x + pad + (icon_slot + pad if icon_reader else 0)
-    text_width = max(0, width - (text_x - x) - pad)
+    icon_slot = 0.0
+    if icon_reader and content_height > 0:
+        icon_slot = min(content_height, content_width * 0.22)
+
+    text_x = content_left + (icon_slot + pad if icon_slot else 0)
+    text_width = max(0, content_right - text_x)
 
     if icon_reader and icon_slot > 0:
         pdf.drawImage(
             icon_reader,
-            x + pad,
+            content_left,
             y + (height - icon_slot) / 2,
             width=icon_slot,
             height=icon_slot,
@@ -210,15 +223,14 @@ def _draw_single_label(
     scientific = plant.get("Scientific Name", "")
     light = simplify_light(plant.get("Light", ""))
     water = simplify_water(plant.get("Water", ""))
-    light_line = f"Light: {light}"
-    water_line = f"Water: {water}"
 
     line_gap = 1
     cursor_y = content_top
 
     def draw_line(text: str, font_key: str, size: float) -> None:
         nonlocal cursor_y
-        if cursor_y - size < content_bottom:
+        # Baseline must stay above the content bottom; skip if no room.
+        if cursor_y - size < content_bottom - 0.01:
             return
         font_name = fonts[font_key]
         pdf.setFont(font_name, size)
@@ -229,8 +241,8 @@ def _draw_single_label(
 
     draw_line(common, "bold", style.common_size)
     draw_line(f"({scientific})", "italic", style.scientific_size)
-    draw_line(light_line, "regular", style.care_size)
-    draw_line(water_line, "regular", style.care_size)
+    draw_line(f"Light: {light}", "regular", style.care_size)
+    draw_line(f"Water: {water}", "regular", style.care_size)
 
     pdf.restoreState()
 
