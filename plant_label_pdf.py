@@ -13,16 +13,15 @@ from reportlab.pdfgen import canvas
 from plant_scraper import simplify_light, simplify_water
 
 # Avery specs: label size and grid on US Letter (8.5" x 11").
-# 5160/5260: labels exactly 2.125" × 1", no vertical gaps, 1/8" column gutters.
+# 5160/5260: label 2.125"×1", 1/8" left & column gaps, 15/32" top, no vertical gaps.
 AVERY_TEMPLATES: dict[str, dict] = {
     "5160": {
-        # Exact label size: 2.125" × 1". No vertical gaps (10 rows = 10").
-        # 1/8" column gutters; left/right margins centered on letter page.
+        # Your measured sheet dimensions (do not substitute Avery catalog sizes).
         "label": "Avery 5160 / 8460 — 1\" × 2.125\" (30 per sheet)",
         "label_width": 2.125 * inch,
         "label_height": 1.0 * inch,
-        "margin_left": ((8.5 - (3 * 2.125) - (2 * (1 / 8))) / 2) * inch,
-        "margin_top": 0.5 * inch,
+        "margin_left": (1 / 8) * inch,
+        "margin_top": (15 / 32) * inch,
         "columns": 3,
         "rows": 10,
         "h_gap": (1 / 8) * inch,
@@ -73,12 +72,12 @@ AVERY_TEMPLATES: dict[str, dict] = {
         "v_gap": 0.0,
     },
     "5260": {
-        # Same exact sheet layout as 5160.
+        # Same measured dimensions as 5160.
         "label": "Avery 5260 / 5520 — 1\" × 2.125\" (30 per sheet)",
         "label_width": 2.125 * inch,
         "label_height": 1.0 * inch,
-        "margin_left": ((8.5 - (3 * 2.125) - (2 * (1 / 8))) / 2) * inch,
-        "margin_top": 0.5 * inch,
+        "margin_left": (1 / 8) * inch,
+        "margin_top": (15 / 32) * inch,
         "columns": 3,
         "rows": 10,
         "h_gap": (1 / 8) * inch,
