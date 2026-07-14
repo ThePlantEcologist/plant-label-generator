@@ -13,18 +13,18 @@ from reportlab.pdfgen import canvas
 from plant_scraper import simplify_light, simplify_water
 
 # Avery specs: label size and grid on US Letter (8.5" x 11").
-# 5160/5260 values match Avery Word template Avery5160AddressLabels.doc.
+# 5160/5260 use measured sheet margins: 1/8" L/R and column gaps, 15/32" top/bottom.
 AVERY_TEMPLATES: dict[str, dict] = {
     "5160": {
-        # Geometry from Avery Word template Avery5160AddressLabels.doc (twips; 1440 twips = 1").
+        # 3×10 grid. Content is clipped to each label box.
         "label": "Avery 5160 / 8460 — 1\" × 2⅝\" (30 per sheet)",
-        "label_width": (3787 / 1440) * inch,
-        "label_height": (1440 / 1440) * inch,
-        "margin_left": (267.5 / 1440) * inch,
-        "margin_top": 0.5 * inch,
+        "label_width": ((8.5 - (1 / 8) - (1 / 8) - (1 / 8) - (1 / 8)) / 3) * inch,
+        "label_height": ((11 - (15 / 32) - (15 / 32)) / 10) * inch,
+        "margin_left": (1 / 8) * inch,
+        "margin_top": (15 / 32) * inch,
         "columns": 3,
         "rows": 10,
-        "h_gap": (172 / 1440) * inch,
+        "h_gap": (1 / 8) * inch,
         "v_gap": 0.0,
     },
     "5161": {
@@ -72,15 +72,15 @@ AVERY_TEMPLATES: dict[str, dict] = {
         "v_gap": 0.0,
     },
     "5260": {
-        # Same sheet layout as Avery 5160 Word template.
+        # Same measured sheet layout as 5160.
         "label": "Avery 5260 / 5520 — 1\" × 2⅝\" (30 per sheet)",
-        "label_width": (3787 / 1440) * inch,
-        "label_height": (1440 / 1440) * inch,
-        "margin_left": (267.5 / 1440) * inch,
-        "margin_top": 0.5 * inch,
+        "label_width": ((8.5 - (1 / 8) - (1 / 8) - (1 / 8) - (1 / 8)) / 3) * inch,
+        "label_height": ((11 - (15 / 32) - (15 / 32)) / 10) * inch,
+        "margin_left": (1 / 8) * inch,
+        "margin_top": (15 / 32) * inch,
         "columns": 3,
         "rows": 10,
-        "h_gap": (172 / 1440) * inch,
+        "h_gap": (1 / 8) * inch,
         "v_gap": 0.0,
     },
 }
@@ -177,11 +177,22 @@ def _draw_single_label(
     icon_reader: ImageReader | None,
     style: LabelStyle,
 ) -> None:
+    """Draw one label's content clipped to its bounding box."""
     fonts = FONT_FAMILIES[style.font_family]
-    pad = 2
+    # Keep text/icon inset from the die-cut edge.
+    pad = 4
+    content_bottom = y + pad
+    content_top = y + height - pad
+
+    # Hard clip so nothing can spill into neighboring labels or gaps.
+    pdf.saveState()
+    clip = pdf.beginPath()
+    clip.rect(x, y, width, height)
+    pdf.clipPath(clip, stroke=0, fill=0)
+
     icon_slot = min(height - 2 * pad, width * 0.22) if icon_reader else 0
     text_x = x + pad + (icon_slot + pad if icon_reader else 0)
-    text_width = width - (text_x - x) - pad
+    text_width = max(0, width - (text_x - x) - pad)
 
     if icon_reader and icon_slot > 0:
         pdf.drawImage(
@@ -199,30 +210,29 @@ def _draw_single_label(
     scientific = plant.get("Scientific Name", "")
     light = simplify_light(plant.get("Light", ""))
     water = simplify_water(plant.get("Water", ""))
-    care_line = f"Light: {light}  |  Water: {water}"
+    light_line = f"Light: {light}"
+    water_line = f"Water: {water}"
 
     line_gap = 1
-    cursor_y = y + height - pad
+    cursor_y = content_top
 
-    pdf.setFont(fonts["bold"], style.common_size)
-    common = _truncate_to_width(pdf, common, fonts["bold"], style.common_size, text_width)
-    cursor_y -= style.common_size
-    pdf.drawString(text_x, cursor_y, common)
+    def draw_line(text: str, font_key: str, size: float) -> None:
+        nonlocal cursor_y
+        if cursor_y - size < content_bottom:
+            return
+        font_name = fonts[font_key]
+        pdf.setFont(font_name, size)
+        fitted = _truncate_to_width(pdf, text, font_name, size, text_width)
+        cursor_y -= size
+        pdf.drawString(text_x, cursor_y, fitted)
+        cursor_y -= line_gap
 
-    pdf.setFont(fonts["italic"], style.scientific_size)
-    sci_text = f"({scientific})"
-    sci_text = _truncate_to_width(
-        pdf, sci_text, fonts["italic"], style.scientific_size, text_width
-    )
-    cursor_y -= line_gap + style.scientific_size
-    pdf.drawString(text_x, cursor_y, sci_text)
+    draw_line(common, "bold", style.common_size)
+    draw_line(f"({scientific})", "italic", style.scientific_size)
+    draw_line(light_line, "regular", style.care_size)
+    draw_line(water_line, "regular", style.care_size)
 
-    pdf.setFont(fonts["regular"], style.care_size)
-    care_line = _truncate_to_width(
-        pdf, care_line, fonts["regular"], style.care_size, text_width
-    )
-    cursor_y -= line_gap + style.care_size
-    pdf.drawString(text_x, cursor_y, care_line)
+    pdf.restoreState()
 
 
 def build_labels_pdf(
