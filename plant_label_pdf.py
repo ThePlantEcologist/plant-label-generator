@@ -13,16 +13,18 @@ from reportlab.pdfgen import canvas
 from plant_scraper import simplify_light, simplify_water
 
 # Avery specs: label size and grid on US Letter (8.5" x 11").
+# 5160/5260 values match Avery Word template Avery5160AddressLabels.doc.
 AVERY_TEMPLATES: dict[str, dict] = {
     "5160": {
+        # Geometry from Avery Word template Avery5160AddressLabels.doc (twips; 1440 twips = 1").
         "label": "Avery 5160 / 8460 — 1\" × 2⅝\" (30 per sheet)",
-        "label_width": 2.625 * inch,
-        "label_height": 1.0 * inch,
-        "margin_left": 0.1875 * inch,
+        "label_width": (3787 / 1440) * inch,
+        "label_height": (1440 / 1440) * inch,
+        "margin_left": (267.5 / 1440) * inch,
         "margin_top": 0.5 * inch,
         "columns": 3,
         "rows": 10,
-        "h_gap": 0.125 * inch,
+        "h_gap": (172 / 1440) * inch,
         "v_gap": 0.0,
     },
     "5161": {
@@ -70,14 +72,15 @@ AVERY_TEMPLATES: dict[str, dict] = {
         "v_gap": 0.0,
     },
     "5260": {
+        # Same sheet layout as Avery 5160 Word template.
         "label": "Avery 5260 / 5520 — 1\" × 2⅝\" (30 per sheet)",
-        "label_width": 2.625 * inch,
-        "label_height": 1.0 * inch,
-        "margin_left": 0.1875 * inch,
+        "label_width": (3787 / 1440) * inch,
+        "label_height": (1440 / 1440) * inch,
+        "margin_left": (267.5 / 1440) * inch,
         "margin_top": 0.5 * inch,
         "columns": 3,
         "rows": 10,
-        "h_gap": 0.125 * inch,
+        "h_gap": (172 / 1440) * inch,
         "v_gap": 0.0,
     },
 }
