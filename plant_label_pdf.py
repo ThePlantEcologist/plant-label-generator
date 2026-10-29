@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from PIL import Image
 from reportlab.lib.units import inch
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen import canvas
 
 from plant_scraper import simplify_light, simplify_water
@@ -222,50 +223,64 @@ def _draw_single_label(
     clip.rect(content_left, content_bottom, content_width, content_height)
     pdf.clipPath(clip, stroke=0, fill=0)
 
-    icon_slot = 0.0
-    if icon_reader and content_height > 0:
-        icon_slot = min(content_height, content_width * 0.22)
-
-    icon_gap = 3  # points between icon and text
-    text_x = content_left + (icon_slot + icon_gap if icon_slot else 0)
-    text_width = max(0, content_right - text_x)
-
-    if icon_reader and icon_slot > 0:
-        pdf.drawImage(
-            icon_reader,
-            content_left,
-            y + (height - icon_slot) / 2,
-            width=icon_slot,
-            height=icon_slot,
-            preserveAspectRatio=True,
-            anchor="w",  # left-aligned, vertically centered
-            mask="auto",
-        )
+    # The icon and the text block are laid out as one group and centered
+    # both across and down the label. Text stays left-aligned in the group.
+    icon_gap = 4  # points between icon and text
+    icon_w = icon_h = 0.0
+    if icon_reader and content_height > 0 and content_width > 0:
+        image_w, image_h = icon_reader.getSize()
+        max_w, max_h = content_width * 0.28, content_height
+        scale = min(max_w / image_w, max_h / image_h) if image_w and image_h else 0
+        icon_w, icon_h = image_w * scale, image_h * scale
+    text_max_width = max(0.0, content_width - (icon_w + icon_gap if icon_w else 0))
 
     common = plant.get("Common Name", "")
     scientific = plant.get("Scientific Name", "")
     light = simplify_light(plant.get("Light", ""))
     water = simplify_water(plant.get("Water", ""))
+    candidates = [
+        (common, "bold", style.common_size),
+        (f"({scientific})", "italic", style.scientific_size),
+        (f"Light: {light}", "regular", style.care_size),
+        (f"Water: {water}", "regular", style.care_size),
+    ]
 
     line_gap = 1
-    cursor_y = content_top
-
-    def draw_line(text: str, font_key: str, size: float) -> None:
-        nonlocal cursor_y
-        # Baseline must stay above the content bottom; skip if no room.
-        if cursor_y - size < content_bottom - 0.01:
-            return
+    lines = []  # (text, font_name, size, ascent, line_height, width)
+    used_height = 0.0
+    for text, font_key, size in candidates:
         font_name = fonts[font_key]
-        pdf.setFont(font_name, size)
-        fitted = _truncate_to_width(pdf, text, font_name, size, text_width)
-        cursor_y -= size
-        pdf.drawString(text_x, cursor_y, fitted)
-        cursor_y -= line_gap
+        ascent, descent = pdfmetrics.getAscentDescent(font_name, size)
+        line_height = ascent - descent
+        needed = line_height + (line_gap if lines else 0)
+        if used_height + needed > content_height + 0.01:
+            break  # no room for this line or any after it
+        fitted = _truncate_to_width(pdf, text, font_name, size, text_max_width)
+        width_used = pdf.stringWidth(fitted, font_name, size)
+        lines.append((fitted, font_name, size, ascent, line_height, width_used))
+        used_height += needed
 
-    draw_line(common, "bold", style.common_size)
-    draw_line(f"({scientific})", "italic", style.scientific_size)
-    draw_line(f"Light: {light}", "regular", style.care_size)
-    draw_line(f"Water: {water}", "regular", style.care_size)
+    text_block_w = max((line[5] for line in lines), default=0.0)
+    group_w = icon_w + (icon_gap if icon_w and lines else 0) + text_block_w
+    group_left = content_left + max(0.0, (content_width - group_w) / 2)
+    center_y = content_bottom + content_height / 2
+
+    if icon_w:
+        pdf.drawImage(
+            icon_reader,
+            group_left,
+            center_y - icon_h / 2,
+            width=icon_w,
+            height=icon_h,
+            mask="auto",
+        )
+
+    text_x = group_left + (icon_w + icon_gap if icon_w else 0)
+    line_top = center_y + used_height / 2
+    for fitted, font_name, size, ascent, line_height, _ in lines:
+        pdf.setFont(font_name, size)
+        pdf.drawString(text_x, line_top - ascent, fitted)
+        line_top -= line_height + line_gap
 
     pdf.restoreState()
 
