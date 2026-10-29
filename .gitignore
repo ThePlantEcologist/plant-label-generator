@@ -20,3 +20,7 @@ Start Plant Label Tool.command
 PlantScraper
 PlantScraper V2
 plant_label_generator.py
+
+# Secrets (never commit these)
+.streamlit/secrets.toml
+.env
