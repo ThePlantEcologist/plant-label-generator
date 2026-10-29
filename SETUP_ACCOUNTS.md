@@ -35,8 +35,11 @@ Secrets box or GitHub's Secrets page. Never commit it to the repo.
 
    To invite someone later, run the same thing with their email. You can
    also use **Table Editor > invited_users > Insert row**. To remove
-   someone, delete their row; their saved settings and plant list go with it
-   (icons stay in storage until you delete them from **Storage > label-icons**).
+   someone, delete their row; their saved settings and plant list go with it.
+   Their icons stay in **Storage > label-icons** until you delete them, and the
+   Privacy Policy promises you will. Each person's icons are in their own
+   folder; to find which folder, run this in Terminal with their email:
+   `python3 -c "import hashlib; print(hashlib.sha256('their@email.com'.encode()).hexdigest()[:32])"`
 4. Open **Project Settings > API Keys** and copy:
    - **Project URL** (looks like `https://abcd1234.supabase.co`)
    - **Publishable key** (starts with `sb_publishable_`)
@@ -53,6 +56,14 @@ Secrets box or GitHub's Secrets page. Never commit it to the repo.
    - App name: Plant Label Generator
    - User support email and developer contact: your email
    - Audience: **External**
+   - Branding: under **App domain**, add these links (use your app's address):
+     - Application home page: `https://YOUR-APP-NAME.streamlit.app/`
+     - Privacy policy: `https://YOUR-APP-NAME.streamlit.app/privacy`
+     - Terms of service: `https://YOUR-APP-NAME.streamlit.app/terms`
+     - Authorized domains: `YOUR-APP-NAME.streamlit.app`
+     If Google won't accept the streamlit.app domain, leave these blank for
+     now (they're optional for apps that only use basic profile info) or
+     host copies of the two policies on theplantecologist.com instead.
    - Data access / scopes: leave the defaults (just email, profile, openid).
    - Under **Audience**, click **Publish app**. Because the app only asks
      for basic profile info, Google doesn't require a review. (If you leave it
@@ -127,6 +138,11 @@ for up to a year with all data intact.
   download a test page, nudge everything left/right or up/down to match your
   printer, and set how much blank border each label keeps. Signed-in users
   get their nudge saved.
+- **New pages:** the label tool is still the homepage. The Privacy Policy
+  (`/privacy`) and Terms of Service (`/terms`) have their own links, are
+  listed in the menu at the top, and are linked at the bottom of the
+  homepage. To change the contact email or effective date, edit the two
+  lines at the top of each file in `app_pages/`.
 - **Sign in (optional):** invited Google accounts get saved settings
   (template, font, sizes, labels per plant, output format, nudge, icon
   choice), two saved icons, and a Frequent plants list. Uninvited accounts
