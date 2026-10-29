@@ -3,4 +3,5 @@ pandas>=2.0
 pillow>=10.0
 reportlab>=4.0
 requests>=2.31
-streamlit>=1.32
+# [auth] adds Authlib, which Streamlit's Google sign-in needs.
+streamlit[auth]>=1.50

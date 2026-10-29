@@ -16,12 +16,13 @@ from plant_scraper import simplify_light, simplify_water
 # 5160/5260: 1/8" left/right/gaps; width derived; 1" tall; 0.5" top/bottom; no v-gaps.
 AVERY_TEMPLATES: dict[str, dict] = {
     "5160": {
-        # 1/8" left + right + column gaps; label width fills remaining page width.
-        # Labels are exactly 1" tall with no vertical gaps (10 rows = 10").
-        "label": "Avery 5160 / 8460 — 1\" × ~2.667\" (30 per sheet)",
-        "label_width": ((8.5 - (1 / 8) - (1 / 8) - (1 / 8) - (1 / 8)) / 3) * inch,
+        # Official Avery 5160 / 5520 / 8160 layout: 2-5/8" x 1" labels,
+        # 3/16" side margins, 1/8" column gap, 1/2" top margin, no row gap.
+        # 3/16 + 2.625 + 1/8 + 2.625 + 1/8 + 2.625 + 3/16 = 8.5"
+        "label": "Avery 5160 / 5520 / 8160 — 1\" × 2⅝\" (30 per sheet)",
+        "label_width": 2.625 * inch,
         "label_height": 1.0 * inch,
-        "margin_left": (1 / 8) * inch,
+        "margin_left": (3 / 16) * inch,
         "margin_top": 0.5 * inch,
         "columns": 3,
         "rows": 10,
@@ -73,11 +74,12 @@ AVERY_TEMPLATES: dict[str, dict] = {
         "v_gap": 0.0,
     },
     "5260": {
-        # Same page fill as 5160: 1/8" left/right/gaps, 1" row height.
-        "label": "Avery 5260 / 5520 — 1\" × ~2.667\" (30 per sheet)",
-        "label_width": ((8.5 - (1 / 8) - (1 / 8) - (1 / 8) - (1 / 8)) / 3) * inch,
+        # Same physical layout as 5160 (kept as its own entry so saved
+        # settings that reference "5260" keep working).
+        "label": "Avery 5260 / 5960 — 1\" × 2⅝\" (30 per sheet)",
+        "label_width": 2.625 * inch,
         "label_height": 1.0 * inch,
-        "margin_left": (1 / 8) * inch,
+        "margin_left": (3 / 16) * inch,
         "margin_top": 0.5 * inch,
         "columns": 3,
         "rows": 10,
@@ -111,6 +113,16 @@ class LabelStyle:
     common_size: int = 8
     scientific_size: int = 7
     care_size: int = 6
+    # Blank space kept inside each label edge, in inches. Avery suggests
+    # keeping text at least 1/16" from the die cut; 5520 weatherproof labels
+    # also have rounded corners, so the default is a little more generous.
+    safe_margin_in: float = 0.08
+    # Printer nudge, in inches. Positive x moves everything right,
+    # positive y moves everything down. Use to cancel a printer's offset.
+    offset_x_in: float = 0.0
+    offset_y_in: float = 0.0
+    # Draw thin label outlines (for an alignment test on plain paper).
+    show_outlines: bool = False
 
 
 def template_choices() -> dict[str, str]:
@@ -186,8 +198,8 @@ def _draw_single_label(
     style: LabelStyle,
 ) -> None:
     """Draw one label clipped to its exact  bounding box."""
-    fonts = FONT_FAMILIES[style.font_family]
-    pad = 3  # points; keep content inside the die-cut
+    fonts = FONT_FAMILIES.get(style.font_family, next(iter(FONT_FAMILIES.values())))
+    pad = max(0.0, style.safe_margin_in) * inch  # keep content inside the die-cut
     content_left = x + pad
     content_right = x + width - pad
     content_bottom = y + pad
@@ -195,16 +207,27 @@ def _draw_single_label(
     content_width = max(0, content_right - content_left)
     content_height = max(0, content_top - content_bottom)
 
+    if style.show_outlines:
+        pdf.saveState()
+        pdf.setLineWidth(0.25)
+        pdf.setStrokeGray(0.6)
+        pdf.roundRect(x, y, width, height, radius=0.0625 * inch, stroke=1, fill=0)
+        pdf.setStrokeGray(0.85)
+        pdf.setDash(1, 2)
+        pdf.rect(x + pad, y + pad, max(0, width - 2 * pad), max(0, height - 2 * pad))
+        pdf.restoreState()
+
     pdf.saveState()
     clip = pdf.beginPath()
-    clip.rect(x, y, width, height)
+    clip.rect(content_left, content_bottom, content_width, content_height)
     pdf.clipPath(clip, stroke=0, fill=0)
 
     icon_slot = 0.0
     if icon_reader and content_height > 0:
         icon_slot = min(content_height, content_width * 0.22)
 
-    text_x = content_left + (icon_slot + pad if icon_slot else 0)
+    icon_gap = 3  # points between icon and text
+    text_x = content_left + (icon_slot + icon_gap if icon_slot else 0)
     text_width = max(0, content_right - text_x)
 
     if icon_reader and icon_slot > 0:
@@ -215,7 +238,7 @@ def _draw_single_label(
             width=icon_slot,
             height=icon_slot,
             preserveAspectRatio=True,
-            anchor="sw",
+            anchor="w",  # left-aligned, vertically centered
             mask="auto",
         )
 
@@ -275,6 +298,8 @@ def build_labels_pdf(
 
         slot_index = index % labels_per_sheet
         x, y = slots[slot_index]
+        x += style.offset_x_in * inch
+        y -= style.offset_y_in * inch
         _draw_single_label(
             pdf,
             x,
@@ -286,6 +311,58 @@ def build_labels_pdf(
             style,
         )
 
+    pdf.save()
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def build_alignment_test_pdf(template_code: str, style: LabelStyle | None = None) -> bytes:
+    """One page of label outlines for checking printer alignment.
+
+    Print on plain paper at 100% scale, then hold it over a label sheet
+    against a window. If the outlines sit to the right of the real labels,
+    use a negative horizontal nudge; if they sit low, use a negative
+    vertical nudge (and the opposite for the other directions).
+    """
+    if template_code not in AVERY_TEMPLATES:
+        raise ValueError(f"Unknown Avery template: {template_code}")
+
+    style = style or LabelStyle()
+    template = AVERY_TEMPLATES[template_code]
+    width = template["label_width"]
+    height = template["label_height"]
+    pad = max(0.0, style.safe_margin_in) * inch
+
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=(8.5 * inch, 11 * inch))
+
+    for number, (x, y) in enumerate(_label_positions(template), start=1):
+        x += style.offset_x_in * inch
+        y -= style.offset_y_in * inch
+        pdf.setLineWidth(0.5)
+        pdf.setStrokeGray(0.2)
+        pdf.roundRect(x, y, width, height, radius=0.0625 * inch, stroke=1, fill=0)
+        pdf.setLineWidth(0.25)
+        pdf.setStrokeGray(0.7)
+        pdf.setDash(1, 2)
+        pdf.rect(x + pad, y + pad, max(0, width - 2 * pad), max(0, height - 2 * pad))
+        pdf.setDash()
+        # Center crosshair
+        cx, cy = x + width / 2, y + height / 2
+        pdf.line(cx - 6, cy, cx + 6, cy)
+        pdf.line(cx, cy - 6, cx, cy + 6)
+        pdf.setFont("Helvetica", 6)
+        pdf.setFillGray(0.4)
+        pdf.drawString(x + pad, y + pad, str(number))
+
+    pdf.setFont("Helvetica", 7)
+    pdf.setFillGray(0.3)
+    pdf.drawCentredString(
+        4.25 * inch,
+        0.2 * inch,
+        f"Alignment test: Avery {template_code}  |  {width / inch:.3f}\" x {height / inch:.3f}\" labels  |  nudge x={style.offset_x_in:+.3f}\" "
+        f"y={style.offset_y_in:+.3f}\"  |  print at 100% / Actual size",
+    )
     pdf.save()
     buffer.seek(0)
     return buffer.getvalue()

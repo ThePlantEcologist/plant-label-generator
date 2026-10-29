@@ -1,0 +1,62 @@
+# Keeps the free Supabase project from pausing.
+#
+# Supabase pauses free projects after about 7 days without database activity.
+# This job pings the database every 2 days. It uses the *publishable* key,
+# which can only call the harmless ping_keepalive() function (see
+# supabase_setup.sql), so no private key is stored in GitHub.
+#
+# GitHub also turns off scheduled workflows in public repos after 60 days
+# with no commits. The last step re-enables this workflow on every run,
+# which resets that clock without making commits.
+#
+# Setup: GitHub repo > Settings > Secrets and variables > Actions >
+#   New repository secret:
+#     SUPABASE_URL              https://YOUR-PROJECT-REF.supabase.co
+#     SUPABASE_PUBLISHABLE_KEY  sb_publishable_...
+# Then Actions tab > "Supabase keep-alive" > Run workflow, to test it.
+
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: "23 13 */2 * *" # every 2 days, 13:23 UTC (morning in NC)
+  workflow_dispatch: {}
+
+permissions:
+  actions: write # only used to re-enable this workflow
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "::error::Add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY as repository secrets."
+            exit 1
+          fi
+          headers=(-H "apikey: $SUPABASE_KEY" -H "Content-Type: application/json")
+          # Legacy anon keys are JWTs and also need a Bearer header.
+          case "$SUPABASE_KEY" in eyJ*) headers+=(-H "Authorization: Bearer $SUPABASE_KEY");; esac
+          for attempt in 1 2 3; do
+            if response=$(curl -sS --fail-with-body --max-time 30 -X POST \
+                 "${SUPABASE_URL%/}/rest/v1/rpc/ping_keepalive" "${headers[@]}" -d '{}'); then
+              echo "Supabase pinged at $response"
+              exit 0
+            fi
+            echo "Attempt $attempt failed: $response"
+            sleep 20
+          done
+          echo "::error::Couldn't reach Supabase. If the project is paused, resume it from the Supabase dashboard."
+          exit 1
+
+      - name: Keep this schedule from being turned off
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/supabase-keepalive.yml/enable"
