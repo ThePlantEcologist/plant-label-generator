@@ -7,7 +7,7 @@ their most-used Plant Toolbox links.
 
 from __future__ import annotations
 
-import base64
+from dataclasses import replace
 from datetime import datetime
 from io import StringIO
 
@@ -28,13 +28,40 @@ EDIT_COLUMNS = ["Common Name", "Scientific Name", "Light", "Water", "Source URL"
 OUTPUT_FORMATS = ["CSV spreadsheet", "PDF labels (Avery)"]
 TEMPLATE_MAP = template_choices()
 
-NO_ICON = "No icon"
-UPLOAD_ICON = "Upload an image"
-UPLOAD_ICON_ONCE = "Upload an image (this time only)"
+# Icon choices are saved by id, so renaming an icon keeps the choice.
+NO_ICON = "none"
+UPLOAD_ICON = "upload"
+ICON_NAME_MAX = 30
+# Choices saved before icons could be renamed.
+LEGACY_ICON_CHOICES = {
+    "No icon": NO_ICON,
+    "Upload an image": UPLOAD_ICON,
+    "Upload an image (this time only)": UPLOAD_ICON,
+    "My icon 1": "slot1",
+    "My icon 2": "slot2",
+}
+
+
+def slot_id(slot: int) -> str:
+    return f"slot{slot}"
 
 
 def slot_label(slot: int) -> str:
-    return f"My icon {slot}"
+    """The icon's custom name, or "My icon N" if it hasn't been named."""
+    name = st.session_state.get("icon_names", {}).get(str(slot), "").strip()
+    return name or f"My icon {slot}"
+
+
+def icon_choice_label(choice: str) -> str:
+    if choice == NO_ICON:
+        return "No icon"
+    if choice == UPLOAD_ICON:
+        is_member = st.session_state.get("account", {}).get("status") == "member"
+        return "Upload an image (this time only)" if is_member else "Upload an image"
+    for slot in ICON_SLOTS:
+        if choice == slot_id(slot):
+            return slot_label(slot)
+    return choice
 
 
 # Settings that are saved for signed-in members. Keys are widget keys.
@@ -149,12 +176,23 @@ def apply_settings(saved: dict) -> None:
                 continue
             st.session_state[key] = min(max(number, low), high)
         elif key == "opt_icon_choice" and isinstance(value, str):
-            st.session_state[key] = value
+            st.session_state[key] = LEGACY_ICON_CHOICES.get(value, value)
+
+    names = saved.get("icon_names")
+    if isinstance(names, dict):
+        clean = {}
+        for slot in ICON_SLOTS:
+            name = str(names.get(str(slot)) or "").strip()[:ICON_NAME_MAX]
+            if name:
+                clean[str(slot)] = name
+        st.session_state.icon_names = clean
 
 
 def collect_settings() -> dict:
-    return {key.removeprefix("opt_"): st.session_state.get(key, default)
-            for key, default in SETTING_DEFAULTS.items()}
+    settings = {key.removeprefix("opt_"): st.session_state.get(key, default)
+                for key, default in SETTING_DEFAULTS.items()}
+    settings["icon_names"] = dict(st.session_state.get("icon_names", {}))
+    return settings
 
 
 def load_member_data(account: dict) -> None:
@@ -166,6 +204,9 @@ def load_member_data(account: dict) -> None:
     try:
         saved = store.get_settings(email)
         apply_settings(saved)
+        for slot in ICON_SLOTS:
+            st.session_state[f"icon_name_{slot}"] = st.session_state.get(
+                "icon_names", {}).get(str(slot), "")
         st.session_state.last_saved_settings = saved
         st.session_state.icon_cache = {slot: store.get_icon(email, slot) for slot in ICON_SLOTS}
         st.session_state.top_plants = store.top_plants(email)
@@ -177,6 +218,11 @@ def load_member_data(account: dict) -> None:
 
 
 def save_settings_if_changed() -> None:
+    """Save the current choices as this account's defaults (members only).
+
+    Runs whenever a setting changes, so the next visit starts with the
+    last-used settings. Quiet on success; only errors show a message.
+    """
     account = st.session_state.get("account", {})
     if account.get("status") != "member":
         return
@@ -186,9 +232,19 @@ def save_settings_if_changed() -> None:
     try:
         get_store().save_settings(account["email"], settings)
         st.session_state.last_saved_settings = settings
-        st.toast("Settings saved to your account", icon="💾")
     except (UserStoreError, OSError) as exc:
-        st.toast(f"Couldn't save settings: {exc}", icon="⚠️")
+        st.toast(f"Couldn't save settings: {exc}", icon=":material/warning:")
+
+
+def rename_icon(slot: int) -> None:
+    name = st.session_state.get(f"icon_name_{slot}", "").strip()[:ICON_NAME_MAX]
+    names = dict(st.session_state.get("icon_names", {}))
+    if name:
+        names[str(slot)] = name
+    else:
+        names.pop(str(slot), None)
+    st.session_state.icon_names = names
+    save_settings_if_changed()
 
 
 # --------------------------------------------------------------------------
@@ -205,14 +261,50 @@ def expand_plants(plants: list[dict], labels_per_plant: int) -> list[dict]:
     return rows
 
 
+@st.cache_data(show_spinner=False, max_entries=8)
+def render_pdf_pages(pdf_bytes: bytes, scale: float = 1.6) -> list[bytes]:
+    """Turn each PDF page into a PNG so any browser can show it."""
+    import io
+
+    import pypdfium2 as pdfium
+
+    pages = []
+    document = pdfium.PdfDocument(pdf_bytes)
+    try:
+        for page in document:
+            image = page.render(scale=scale).to_pil()
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG", optimize=True)
+            pages.append(buffer.getvalue())
+            page.close()
+    finally:
+        document.close()
+    return pages
+
+
 def show_pdf_preview(pdf_bytes: bytes) -> None:
-    """Embed a PDF preview in the app."""
-    encoded = base64.b64encode(pdf_bytes).decode()
-    st.markdown(
-        f'<iframe src="data:application/pdf;base64,{encoded}" '
-        'width="100%" height="640" style="border:1px solid #ddd;border-radius:8px;">'
-        "</iframe>",
-        unsafe_allow_html=True,
+    """Show the label sheets as images.
+
+    Browsers like Chrome block PDFs embedded as data links, so the old
+    iframe preview never displayed. Images work everywhere.
+    """
+    try:
+        pages = render_pdf_pages(pdf_bytes)
+    except Exception as exc:  # noqa: BLE001 - preview is optional
+        st.info(f"Preview isn't available ({exc}). The download below still works.")
+        return
+    if not pages:
+        return
+    page_number = 1
+    if len(pages) > 1:
+        page_number = st.number_input(
+            f"Preview page (of {len(pages)})", min_value=1, max_value=len(pages), value=1, step=1
+        )
+    with st.container(border=True):
+        st.image(pages[page_number - 1], width="stretch")
+    st.caption(
+        "Preview only. The gray outlines show where each label is and won't print "
+        "unless you turn on **Draw label outlines**."
     )
 
 
@@ -270,9 +362,10 @@ def render_frequent_plants() -> None:
                 )
             with forget_col:
                 st.button(
-                    "✕",
+                    "",
+                    icon=":material/delete:",
                     key=f"forget_plant_{index}",
-                    help="Remove from this list",
+                    help="Remove from your frequent plants",
                     on_click=forget_plant,
                     args=(plant["url"],),
                 )
@@ -339,10 +432,21 @@ with st.sidebar:
         st.caption("Save up to two images to use on your labels.")
         icon_cache = st.session_state.setdefault("icon_cache", {})
         for slot in ICON_SLOTS:
+            if not icon_cache.get(slot):
+                st.session_state[f"icon_name_{slot}"] = ""  # fresh name box for a new icon
             with st.container(border=True):
                 st.markdown(f"**{slot_label(slot)}**")
                 if icon_cache.get(slot):
                     st.image(icon_cache[slot], width=90)
+                    st.text_input(
+                        "Name",
+                        key=f"icon_name_{slot}",
+                        max_chars=ICON_NAME_MAX,
+                        placeholder=f"My icon {slot}",
+                        help="Shown in the icon choices for your labels. Press Enter to save.",
+                        on_change=rename_icon,
+                        args=(slot,),
+                    )
                 upload_version = st.session_state.get(f"icon_upload_version_{slot}", 0)
                 upload = st.file_uploader(
                     "Replace" if icon_cache.get(slot) else "Upload",
@@ -353,6 +457,7 @@ with st.sidebar:
                 save_col, delete_col = st.columns(2)
                 with save_col:
                     if st.button("Save", key=f"icon_save_{slot}", disabled=upload is None,
+                                 icon=":material/save:",
                                  width="stretch"):
                         try:
                             png = prepare_icon(upload.getvalue())
@@ -360,16 +465,20 @@ with st.sidebar:
                             icon_cache[slot] = png
                             # A new key gives an empty uploader after saving.
                             st.session_state[f"icon_upload_version_{slot}"] = upload_version + 1
-                            st.toast(f"Saved {slot_label(slot)}", icon="🖼️")
+                            st.toast(f"Saved {slot_label(slot)}", icon=":material/image:")
                             st.rerun()
                         except (ValueError, UserStoreError, OSError) as exc:
                             st.error(str(exc))
                 with delete_col:
-                    if st.button("Delete", key=f"icon_delete_{slot}",
+                    if st.button("Delete", key=f"icon_delete_{slot}", icon=":material/delete:",
                                  disabled=not icon_cache.get(slot), width="stretch"):
                         try:
                             get_store().delete_icon(account["email"], slot)
                             icon_cache[slot] = None
+                            names = dict(st.session_state.get("icon_names", {}))
+                            names.pop(str(slot), None)
+                            st.session_state.icon_names = names
+                            save_settings_if_changed()
                             st.rerun()
                         except (UserStoreError, OSError) as exc:
                             st.error(str(exc))
@@ -485,11 +594,11 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
         min_value=1,
         max_value=100,
         step=1,
-        key="opt_labels_per_plant",
+        key="opt_labels_per_plant", on_change=save_settings_if_changed,
         help="Each plant will appear this many times in the output.",
     )
 
-    st.radio("Output format", options=OUTPUT_FORMATS, horizontal=True, key="opt_output_format")
+    st.radio("Output format", options=OUTPUT_FORMATS, horizontal=True, key="opt_output_format", on_change=save_settings_if_changed)
     output_format = st.session_state.opt_output_format
 
     one_time_icon = None
@@ -499,23 +608,21 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
             "Avery label template",
             options=list(TEMPLATE_MAP.keys()),
             format_func=lambda code: TEMPLATE_MAP[code],
-            key="opt_template",
+            key="opt_template", on_change=save_settings_if_changed,
         )
 
         # Icon choice: saved icons for members, a one-time upload for everyone.
         icon_cache = st.session_state.get("icon_cache", {}) if is_member else {}
         icon_options = [NO_ICON]
-        icon_options += [slot_label(s) for s in ICON_SLOTS if icon_cache.get(s)]
-        icon_options.append(UPLOAD_ICON_ONCE if is_member else UPLOAD_ICON)
+        icon_options += [slot_id(s) for s in ICON_SLOTS if icon_cache.get(s)]
+        icon_options.append(UPLOAD_ICON)
         if st.session_state.opt_icon_choice not in icon_options:
-            # Keep a saved choice of a one-time upload meaningful for either label.
-            if st.session_state.opt_icon_choice in (UPLOAD_ICON, UPLOAD_ICON_ONCE):
-                st.session_state.opt_icon_choice = icon_options[-1]
-            else:
-                st.session_state.opt_icon_choice = NO_ICON
+            st.session_state.opt_icon_choice = NO_ICON  # e.g. that icon was deleted
+        icon_labels = {choice: icon_choice_label(choice) for choice in icon_options}
         st.radio("Label icon", options=icon_options, key="opt_icon_choice", horizontal=True,
-                 help="Shown on the left side of each label.")
-        if st.session_state.opt_icon_choice in (UPLOAD_ICON, UPLOAD_ICON_ONCE):
+                 format_func=icon_labels.get, on_change=save_settings_if_changed,
+                 help="Shown beside the text on each label.")
+        if st.session_state.opt_icon_choice == UPLOAD_ICON:
             one_time_icon = st.file_uploader(
                 "Icon image",
                 type=["png", "jpg", "jpeg", "webp", "gif"],
@@ -526,11 +633,11 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
 
         col1, col2 = st.columns(2)
         with col1:
-            st.selectbox("Font", options=list(FONT_FAMILIES.keys()), key="opt_font_family")
-            st.slider("Common name size", 6, 14, key="opt_common_size")
+            st.selectbox("Font", options=list(FONT_FAMILIES.keys()), key="opt_font_family", on_change=save_settings_if_changed)
+            st.slider("Common name size", 6, 14, key="opt_common_size", on_change=save_settings_if_changed)
         with col2:
-            st.slider("Scientific name size", 5, 12, key="opt_scientific_size")
-            st.slider("Light / water line size", 5, 11, key="opt_care_size")
+            st.slider("Scientific name size", 5, 12, key="opt_scientific_size", on_change=save_settings_if_changed)
+            st.slider("Light / water line size", 5, 11, key="opt_care_size", on_change=save_settings_if_changed)
 
         with st.expander("Print alignment"):
             st.caption(
@@ -542,14 +649,14 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
             nudge_x, nudge_y = st.columns(2)
             with nudge_x:
                 st.number_input("Left / right nudge (inches)", -0.25, 0.25, step=0.01,
-                                format="%.2f", key="opt_offset_x_in",
+                                format="%.2f", key="opt_offset_x_in", on_change=save_settings_if_changed,
                                 help="Positive moves everything right.")
             with nudge_y:
                 st.number_input("Up / down nudge (inches)", -0.25, 0.25, step=0.01,
-                                format="%.2f", key="opt_offset_y_in",
+                                format="%.2f", key="opt_offset_y_in", on_change=save_settings_if_changed,
                                 help="Positive moves everything down.")
             st.slider("Blank border inside each label (inches)", 0.03, 0.20, step=0.01,
-                      key="opt_safe_margin_in",
+                      key="opt_safe_margin_in", on_change=save_settings_if_changed,
                       help="Keeps text and icons away from the label edges and rounded corners.")
             show_outlines = st.checkbox("Draw label outlines on the PDF", value=False,
                                         help="Useful for a test print on plain paper.")
@@ -570,7 +677,7 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
         show_outlines = False
 
     if is_member:
-        st.caption("Your choices are saved to your account when you generate labels.")
+        st.caption("Your choices are saved to your account as you go, so they'll be ready next time.")
 
     generate = st.button("Generate labels", type="primary", width="stretch")
 
@@ -591,12 +698,12 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
             else:
                 icon_bytes = None
                 choice = st.session_state.opt_icon_choice
-                if choice in (UPLOAD_ICON, UPLOAD_ICON_ONCE):
+                if choice == UPLOAD_ICON:
                     if one_time_icon is not None:
                         icon_bytes = one_time_icon.getvalue()
                 else:
                     for slot in ICON_SLOTS:
-                        if choice == slot_label(slot):
+                        if choice == slot_id(slot):
                             icon_bytes = st.session_state.get("icon_cache", {}).get(slot)
 
                 style = LabelStyle(
@@ -617,6 +724,15 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
                         style=style,
                         icon_bytes=icon_bytes,
                     )
+                    # Same sheet with faint label outlines, for the on-screen preview only.
+                    st.session_state.preview_pdf_bytes = (
+                        st.session_state.pdf_bytes if show_outlines else build_labels_pdf(
+                            plants=rows,
+                            template_code=st.session_state.opt_template,
+                            style=replace(style, show_outlines=True),
+                            icon_bytes=icon_bytes,
+                        )
+                    )
                 st.session_state.pdf_timestamp = timestamp
 
             st.success(
@@ -635,7 +751,9 @@ if "plants_df" in st.session_state and st.session_state.plants_df is not None:
         )
 
         if "pdf_bytes" in st.session_state and st.session_state.pdf_bytes is not None:
-            show_pdf_preview(st.session_state.pdf_bytes)
+            show_pdf_preview(
+                st.session_state.get("preview_pdf_bytes") or st.session_state.pdf_bytes
+            )
             st.download_button(
                 label="Download PDF labels",
                 data=st.session_state.pdf_bytes,

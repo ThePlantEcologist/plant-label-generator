@@ -5,3 +5,5 @@ reportlab>=4.0
 requests>=2.31
 # [auth] adds Authlib, which Streamlit's Google sign-in needs.
 streamlit[auth]>=1.50
+# Draws the PDF preview as images (Chrome blocks embedded PDFs).
+pypdfium2>=4.30
