@@ -57,10 +57,10 @@ Secrets box or GitHub's Secrets page. Never commit it to the repo.
    - User support email and developer contact: your email
    - Audience: **External**
    - Branding: under **App domain**, add these links (use your app's address):
-     - Application home page: `https://YOUR-APP-NAME.streamlit.app/`
-     - Privacy policy: `https://YOUR-APP-NAME.streamlit.app/privacy`
-     - Terms of service: `https://YOUR-APP-NAME.streamlit.app/terms`
-     - Authorized domains: `YOUR-APP-NAME.streamlit.app`
+     - Application home page: `https://plant-label-generator.streamlit.app/`
+     - Privacy policy: `https://plant-label-generator.streamlit.app/privacy`
+     - Terms of service: `https://plant-label-generator.streamlit.app/terms`
+     - Authorized domains: `plant-label-generator.streamlit.app`
      If Google won't accept the streamlit.app domain, leave these blank for
      now (they're optional for apps that only use basic profile info) or
      host copies of the two policies on theplantecologist.com instead.
@@ -71,7 +71,7 @@ Secrets box or GitHub's Secrets page. Never commit it to the repo.
 3. Open **Clients** (or **Credentials > Create credentials > OAuth client ID**):
    - Application type: **Web application**
    - Authorized redirect URIs, add both:
-     - `https://YOUR-APP-NAME.streamlit.app/oauth2callback`
+     - `https://plant-label-generator.streamlit.app/oauth2callback`
      - `http://localhost:8501/oauth2callback`
    - Click **Create** and copy the **Client ID** and **Client secret**
      (*secret*).
@@ -87,7 +87,7 @@ Secrets box or GitHub's Secrets page. Never commit it to the repo.
 
    ```toml
    [auth]
-   redirect_uri = "https://YOUR-APP-NAME.streamlit.app/oauth2callback"
+   redirect_uri = "https://plant-label-generator.streamlit.app/oauth2callback"
    cookie_secret = "THE RANDOM STRING FROM STEP 1"
    client_id = "FROM GOOGLE"
    client_secret = "FROM GOOGLE"
